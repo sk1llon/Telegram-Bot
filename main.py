@@ -1,89 +1,124 @@
 import telebot
-import time
-from config import BOT_TOKEN, API_KEY
-from telebot import custom_filters
-from telebot.handler_backends import State, StatesGroup
-from telebot.storage import StateMemoryStorage
+import sqlite3
+from random import choice
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from config import BOT_TOKEN
 
 
-menu = {'Fish': 1, 'Meat': 2, 'Juice': 3}
+with sqlite3.connect('telegram_bot.db', check_same_thread=False) as conn:
+    cursor = conn.cursor()
+    cursor.execute("""CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR NOT NULL,
+    table_num INTEGER NOT NULL,
+    order_dishes VARCHAR NOT NULL)""")
 
 
-state_storage = StateMemoryStorage()
-bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
+bot = telebot.TeleBot(BOT_TOKEN)
 
+phrases = ['fine', 'amazing', 'wonderful']
 
-class MyStates(StatesGroup):
-    name = State()
-    table_number = State()
-    order = State()
-    print_info = State()
+menu = {'Fish': 1000, 'Meat': 2000, 'Juice': 300}
+
+name = None
+table_number = None
+order = None
 
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.set_state(message.from_user.id, MyStates.name, message.chat.id)
-    bot.send_message(message.chat.id, 'Hi! I can help you to choose and order food you want!\nEnter your name')
+    msg = bot.send_message(message.chat.id, 'Hi! I can help you to choose and order food you want!\nEnter your name')
+    bot.register_next_step_handler(msg, get_name)
 
 
-@bot.message_handler(state='*', commands=['cancel'])
-def any_state(message):
-    bot.send_message(message.chat.id, 'Your state was cancelled')
-    bot.delete_state(message.from_user.id, message.chat.id)
-
-
-@bot.message_handler(state=MyStates.name)
 def get_name(message):
-    bot.send_message(message.chat.id, 'Now enter the number of the table you are sitting at')
-    bot.set_state(message.from_user.id, MyStates.table_number, message.chat.id)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['name'] = message.text
+    global name
+    if name is None:
+        name = message.text
+    msg = bot.send_message(message.chat.id, 'Now enter the number of the table you are sitting at (1-20)')
+    bot.register_next_step_handler(msg, get_table)
 
 
-@bot.message_handler(state=MyStates.table_number, is_digit=True)
+def is_correct_table_num(message):
+    if message.text.isdigit() and int(message.text) in range(1, 21):
+        return True
+    else:
+        msg = bot.send_message(message.chat.id, 'Incorrect value. Enter the number of the table again (1 - 20)')
+        bot.register_next_step_handler(msg, is_correct_table_num)
+
+
 def get_table(message):
-    bot.send_message(message.chat.id, 'Our menu:')
-    for keys, values in menu.items():
-        bot.send_message(message.chat.id, '{key} - {value} rub'.format(key=keys, value=values))
-    bot.send_message(message.chat.id, 'What do you want?')
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['table'] = message.text
-    bot.set_state(message.from_user.id, MyStates.order, message.chat.id)
+    global table_number
+    if is_correct_table_num(message) and table_number is None:
+        table_number = message.text
+    bot.send_message(message.chat.id, 'Would you like anything?', reply_markup=gen_markup())
 
 
-@bot.message_handler(state=MyStates.table_number, is_digit=False)
-def incorrect_table(message):
-    bot.send_message(message.chat.id, 'Incorrect value. Enter the number of the table again')
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    global phrases
 
 
-@bot.message_handler(state=MyStates.order)
+
+def gen_markup():
+    markup = InlineKeyboardMarkup()
+    for i_dish, i_price in menu.items():
+        dish = InlineKeyboardButton(resize_markup=True, one_time_keyboard=True, text='{dish} - {price}'.format(
+            dish=i_dish, price=i_price), callback_data=i_dish)
+        markup.add(dish)
+    call_no = InlineKeyboardButton(resize_markup=True, one_time_keyboard=True, text='No', callback_data='No')
+    markup.add(call_no)
+    return markup
+
+
 def get_order(message):
-    order_list = []
-    bot.set_state(message.from_user.id, MyStates.print_info, message.chat.id)
-    while message.text != 'All':
-        bot.send_message(message.chat.id, 'Something else?')
-        time.sleep(5)
-        order_list.append(message.text)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['order'] = order_list
+    global order
+    order += message.text
+    order += ', '
+    get_table(message)
 
 
-@bot.message_handler(state=MyStates.print_info)
-def print_info(message):
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        msg = ("Check your order:\n"
-               "Name: {name}\n"
-               "Table number: {table}\n"
-               "Order: {order}".format(
-                name=data['name'],
-                table=data['table'],
-                order=(dish for dish in data['order'])
-               ))
-        bot.send_message(message.chat.id, msg, parse_mode='html')
-    bot.delete_state(message.from_user.id, message.chat.id)
+def check_order(message):
+    global order
+    order = order[len(order) - 2:]
+    bot.send_message(message.chat.id, 'Let`s check your order.\n'
+                                      'Table number - {table_number}\n'
+                                      'Order - {order}'.format(table_number=table_number,
+                                                               order=order))
+    msg = bot.send_message(message.chat.id, 'Is everything right?', reply_markup=gen_markup_2())
+    bot.register_next_step_handler(msg, finish)
 
 
-bot.add_custom_filter(custom_filters.StateFilter(bot))
-bot.add_custom_filter(custom_filters.IsDigitFilter())
+def gen_markup_2():
+    markup = ReplyKeyboardMarkup()
+    call_yes = KeyboardButton('Yes')
+    call_no = KeyboardButton('No')
+    markup.add(call_yes, call_no)
+    return markup
 
-bot.infinity_polling(skip_pending=True)
+
+def finish(message):
+    global name, table_number, order
+    if message.text == 'Yes':
+        bot.send_message(message.chat.id, 'Order will be ready in 20 minutes')
+        insert_data(name, table_number, order)
+        name = None
+        table_number = None
+        order = None
+    elif message.text == 'No':
+        table_number = None
+        order = None
+        get_name(message)
+    else:
+        msg = bot.send_message(message.chat.id, 'There is no such answer. Is everything right with your order?',
+                               reply_markup=gen_markup_2())
+        bot.register_next_step_handler(msg, finish)
+
+
+def insert_data(u_name, u_table, u_order):
+    cursor.execute('INSERT INTO users (name, table_num, order_dishes) VALUES (?, ?, ?)',
+                   (u_name, u_table, u_order))
+    conn.commit()
+
+
+bot.polling(non_stop=True)
