@@ -22,7 +22,8 @@ menu = {'Fish': 1000, 'Meat': 2000, 'Juice': 300}
 
 name = None
 table_number = None
-order = None
+order_list = list()
+order_str = None
 
 
 @bot.message_handler(commands=['start'])
@@ -72,19 +73,18 @@ def gen_markup():
 
 
 def get_order(message):
-    global order
-    order += message.text
-    order += ', '
+    global order_list
+    order_list.append(message.text)
     get_table(message)
 
 
 def check_order(message):
-    global order
-    order = order[len(order) - 2:]
+    global order_list, order_str
+    order_str = ', '.join(order_list)
     bot.send_message(message.chat.id, 'Let`s check your order.\n'
                                       'Table number - {table_number}\n'
                                       'Order - {order}'.format(table_number=table_number,
-                                                               order=order))
+                                                               order=order_str))
     msg = bot.send_message(message.chat.id, 'Is everything right?', reply_markup=gen_markup_2())
     bot.register_next_step_handler(msg, finish)
 
@@ -98,16 +98,18 @@ def gen_markup_2():
 
 
 def finish(message):
-    global name, table_number, order
+    global name, table_number, order_list, order_str
     if message.text == 'Yes':
         bot.send_message(message.chat.id, 'Order will be ready in 20 minutes')
-        insert_data(name, table_number, order)
+        insert_data(name, table_number, order_str)
         name = None
         table_number = None
-        order = None
+        order_list.clear()
+        order_str = None
     elif message.text == 'No':
         table_number = None
-        order = None
+        order_list.clear()
+        order_str = None
         get_name(message)
     else:
         msg = bot.send_message(message.chat.id, 'There is no such answer. Is everything right with your order?',
