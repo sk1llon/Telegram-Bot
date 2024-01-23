@@ -1,7 +1,8 @@
 import telebot
 import sqlite3
 from random import choice
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import (InlineKeyboardMarkup, InlineKeyboardButton,
+                           ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove)
 from config import BOT_TOKEN
 
 
@@ -16,10 +17,9 @@ with sqlite3.connect('telegram_bot.db', check_same_thread=False) as conn:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-phrases = ['fine', 'amazing', 'wonderful']
+menu = {'Рыба': 1000, 'Мясо': 2000, 'Сок': 300}
 
-menu = {'Fish': 1000, 'Meat': 2000, 'Juice': 300}
-
+choose_answer = ['Прекрасный выбор!', 'Желаете что-нибудь ещё?', 'Замечательно!', 'Великолепно!']
 name = None
 table_number = None
 order_list = list()
@@ -28,91 +28,125 @@ order_str = None
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    msg = bot.send_message(message.chat.id, 'Hi! I can help you to choose and order food you want!\nEnter your name')
+    """
+    Приветствие и получение имени пользователя
+    """
+    msg = bot.send_message(message.chat.id,
+                           'Привет! Я бот, который поможет вам выбрать и заказать еду в нашем ресторане'
+                           '\n\nВведите ваше имя')
     bot.register_next_step_handler(msg, get_name)
 
 
 def get_name(message):
+    """
+    Получение номера стола
+    """
     global name
     if name is None:
         name = message.text
-    msg = bot.send_message(message.chat.id, 'Now enter the number of the table you are sitting at (1-20)')
+    msg = bot.send_message(message.chat.id, '{name}, введите номер стола за которым вы сидите (от 1 до 20)'.format(
+        name=name
+    ))
     bot.register_next_step_handler(msg, get_table)
 
 
 def is_correct_table_num(message):
+    """
+    Проверка корректности введённого номера стола
+    """
     if message.text.isdigit() and int(message.text) in range(1, 21):
         return True
     else:
-        msg = bot.send_message(message.chat.id, 'Incorrect value. Enter the number of the table again (1 - 20)')
+        msg = bot.send_message(message.chat.id, 'Неверное значение\nВведите номер стола ещё раз (от 1 до 20)')
         bot.register_next_step_handler(msg, is_correct_table_num)
 
 
 def get_table(message):
+    """
+    Получаем список блюд от пользователя
+    """
     global table_number
     if is_correct_table_num(message) and table_number is None:
         table_number = message.text
-    bot.send_message(message.chat.id, 'Would you like anything?', reply_markup=gen_markup())
-
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
-    global phrases
-
+    bot.send_message(message.chat.id, 'Что-нибудь желаете?', reply_markup=gen_markup())
 
 
 def gen_markup():
+    """
+    Создание готовых ответов для пользователя (список блюд)
+    """
     markup = InlineKeyboardMarkup()
     for i_dish, i_price in menu.items():
-        dish = InlineKeyboardButton(resize_markup=True, one_time_keyboard=True, text='{dish} - {price}'.format(
+        dish = InlineKeyboardButton(resize_markup=True, text='{dish} - {price}'.format(
             dish=i_dish, price=i_price), callback_data=i_dish)
         markup.add(dish)
-    call_no = InlineKeyboardButton(resize_markup=True, one_time_keyboard=True, text='No', callback_data='No')
+    call_no = InlineKeyboardButton(resize_markup=True, text='Всё', callback_data='Всё')
     markup.add(call_no)
     return markup
 
 
-def get_order(message):
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    if call.data == 'Всё':
+        check_order(call)
+    else:
+        get_order(call)
+        bot.send_message(call.message.chat.id, text=choice(choose_answer))
+
+
+def get_order(call):
     global order_list
-    order_list.append(message.text)
-    get_table(message)
+    order_list.append(call.data)
+    if len(order_list) == 0:
+        bot.send_message(call.message.chat.id, 'Что-нибудь желаете?', reply_markup=gen_markup())
 
 
-def check_order(message):
+def check_order(call):
+    """
+    Проверяем заказ
+    """
     global order_list, order_str
     order_str = ', '.join(order_list)
-    bot.send_message(message.chat.id, 'Let`s check your order.\n'
-                                      'Table number - {table_number}\n'
-                                      'Order - {order}'.format(table_number=table_number,
-                                                               order=order_str))
-    msg = bot.send_message(message.chat.id, 'Is everything right?', reply_markup=gen_markup_2())
+    bot.send_message(call.message.chat.id, 'Давайте проверим введённые вами данные\n'
+                                           'Номер стола - {table_number}\n'
+                                           'Заказ - {order}'.format(table_number=table_number,
+                                                                    order=order_str))
+    msg = bot.send_message(call.message.chat.id, 'Всё верно?', reply_markup=gen_markup_2())
+    ReplyKeyboardRemove()
     bot.register_next_step_handler(msg, finish)
 
 
 def gen_markup_2():
+    """
+    Создание готовых ответов для пользователя
+    """
     markup = ReplyKeyboardMarkup()
-    call_yes = KeyboardButton('Yes')
-    call_no = KeyboardButton('No')
+    markup.row_width = 2
+    call_yes = KeyboardButton('Да')
+    call_no = KeyboardButton('Нет')
     markup.add(call_yes, call_no)
     return markup
 
 
 def finish(message):
+    """
+    Проверяем на правильности введённые данные
+    """
     global name, table_number, order_list, order_str
-    if message.text == 'Yes':
-        bot.send_message(message.chat.id, 'Order will be ready in 20 minutes')
+    if message.text == 'Да':
+        bot.send_message(message.chat.id, 'Заказ будет готов в течение 20 минут')
         insert_data(name, table_number, order_str)
         name = None
         table_number = None
         order_list.clear()
         order_str = None
-    elif message.text == 'No':
+    elif message.text == 'Нет':
         table_number = None
         order_list.clear()
         order_str = None
         get_name(message)
     else:
-        msg = bot.send_message(message.chat.id, 'There is no such answer. Is everything right with your order?',
+        msg = bot.send_message(message.chat.id, 'Я вас немного не понял. Вся ли информация верна?',
                                reply_markup=gen_markup_2())
         bot.register_next_step_handler(msg, finish)
 
