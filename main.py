@@ -2,7 +2,7 @@ import telebot
 import sqlite3
 from random import choice
 from telebot.types import (InlineKeyboardMarkup, InlineKeyboardButton,
-                           ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove)
+                           ReplyKeyboardMarkup, KeyboardButton)
 from config import BOT_TOKEN
 
 
@@ -47,7 +47,7 @@ def get_name(message):
     msg = bot.send_message(message.chat.id, '{name}, введите номер стола за которым вы сидите (от 1 до 20)'.format(
         name=name
     ))
-    bot.register_next_step_handler(msg, get_table)
+    bot.register_next_step_handler(msg, is_correct_table_num)
 
 
 def is_correct_table_num(message):
@@ -55,7 +55,7 @@ def is_correct_table_num(message):
     Проверка корректности введённого номера стола
     """
     if message.text.isdigit() and int(message.text) in range(1, 21):
-        return True
+        get_table(message)
     else:
         msg = bot.send_message(message.chat.id, 'Неверное значение\nВведите номер стола ещё раз (от 1 до 20)')
         bot.register_next_step_handler(msg, is_correct_table_num)
@@ -66,9 +66,8 @@ def get_table(message):
     Получаем список блюд от пользователя
     """
     global table_number
-    if is_correct_table_num(message) and table_number is None:
-        table_number = message.text
-    bot.send_message(message.chat.id, 'Что-нибудь желаете?', reply_markup=gen_markup())
+    table_number = message.text
+    bot.send_message(message.chat.id, 'Что-нибудь желаете? Нажмите "Всё" когда закончите', reply_markup=gen_markup())
 
 
 def gen_markup():
@@ -98,7 +97,8 @@ def get_order(call):
     global order_list
     order_list.append(call.data)
     if len(order_list) == 0:
-        bot.send_message(call.message.chat.id, 'Что-нибудь желаете?', reply_markup=gen_markup())
+        bot.send_message(call.message.chat.id, 'Что-нибудь желаете? Нажмите "Всё" когда закончите',
+                         reply_markup=gen_markup())
 
 
 def check_order(call):
@@ -112,7 +112,6 @@ def check_order(call):
                                            'Заказ - {order}'.format(table_number=table_number,
                                                                     order=order_str))
     msg = bot.send_message(call.message.chat.id, 'Всё верно?', reply_markup=gen_markup_2())
-    ReplyKeyboardRemove()
     bot.register_next_step_handler(msg, finish)
 
 
